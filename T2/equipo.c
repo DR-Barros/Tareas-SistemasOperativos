@@ -7,37 +7,33 @@
 
 pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t c = PTHREAD_COND_INITIALIZER;
-int wait = 0;
-Queue *q;
+int wait = 0, equipos = 0;
+char *equipo[1000000][5];
 
 
 char **hay_equipo(char *nombre) {
-  char **equipoLocal = malloc(5*sizeof(char *));
-  printf("%d \n", wait);
   pthread_mutex_lock(&m);
-  char **e = get(q);
-  for (int i = 0; i < 5; i++){
-    if(e[i] == NULL){
-      e[i] = nombre;
-      put(q, e);
-      break;
+  int equipoAct = wait/5;
+  int pos = wait%5;
+  equipo[equipoAct][pos] = nombre;
+  if (wait%5 == 4){
+    wait++;
+    equipos++;
+    pthread_cond_broadcast(&c);
+  } else{
+    wait++;
+    while (equipoAct == equipos){
+      pthread_cond_wait(&c, &m);
     }
   }
-
-
   pthread_mutex_unlock(&m);
-  return equipoLocal;
+  char **team = malloc(5*sizeof(char *));
+  team = equipo[equipoAct];
+  return team;
 }
 
 void init_equipo(void) {
-  char **team = malloc(5*sizeof(char *));
-  for (int i = 0; i < 5; i++){
-    team[i] = NULL;
-  }
-  q = makeQueue();
-  put(q, team);
 }
 
 void end_equipo(void) {
-  destroyQueue(q);
 }
