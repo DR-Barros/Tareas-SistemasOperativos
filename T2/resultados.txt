@@ -144,3 +144,7 @@ el test intento leer el nombre de un jugador que resulto ser
 una direccion invalida.
 
 Esperando
+Test 2: aprobado
+Total equipos = 500002
+Total jugadores = 2500010
+Felicitaciones, su tarea paso todos los tests

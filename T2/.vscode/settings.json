@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "stdlib.h": "c",
-        "pss.h": "c"
+        "pss.h": "c",
+        "equipo.h": "c"
     }
 }

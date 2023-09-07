@@ -9,7 +9,8 @@ pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t c = PTHREAD_COND_INITIALIZER;
 int wait = 0, equipos = 0;
 //Buffer de equipos
-char ***equipo;
+char **equipo;
+int estado = 0, eFaltante =5;
 
 
 
@@ -18,30 +19,36 @@ char **hay_equipo(char *nombre) {
   int equipoAct = wait/5;
   int pos = wait%5;
   wait++;
+  // pasan solo si les corresponde armar el equipo
   while (equipoAct > equipos){
     pthread_cond_wait(&c, &m);
   }
-  if (pos == 0){
-    equipo[equipoAct%5000] = malloc(5* sizeof(char *));
+  char **equipo_local = equipo;
+  //se van agregando al arreglo
+  equipo[pos] = nombre;
+  estado++;
+  //espera a que todos los jugadores se hayan agregado al equipos para hacer el return
+  while (estado < 5 ){
+    pthread_cond_wait(&c, &m);
   }
-  equipo[equipoAct%5000][pos] = nombre;
-  if (pos == 4){
-    
+  eFaltante--;
+  //si ya estan listo todos los equipos permite la entrada del resto
+  if (eFaltante == 0){
+    equipo = malloc(5*sizeof(char *));
     equipos++;
-    pthread_cond_broadcast(&c);
-  } else{
-    while (equipoAct == equipos){
-      pthread_cond_wait(&c, &m);
-    }
+    estado = 0;
+    eFaltante = 5;
+    //printf("%d \n", equipos);
   }
+  pthread_cond_broadcast(&c);
   pthread_mutex_unlock(&m);
-  return equipo[equipoAct%5000];
+  return equipo_local;
 }
 
 void init_equipo(void) {
-  //equipo = malloc(5000 *sizeof(char **));
+  equipo = malloc(5*sizeof(char *));
 }
 
 void end_equipo(void) {
-  //free(equipo);
+  free(equipo);
 }

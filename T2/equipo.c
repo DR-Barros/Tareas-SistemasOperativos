@@ -1,54 +1,43 @@
 #include <pthread.h>
 #include <stdlib.h>
-#include <stdio.h>
 
 #include "pss.h"
 #include "equipo.h"
 
 pthread_mutex_t m = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t c = PTHREAD_COND_INITIALIZER;
-int wait = 0, equipos = 0;
-//Buffer de equipos
+int wait = 0;
 char **equipo;
-int actual = 0;
-int estado = 0, eFaltante =5;
+int *state;
 
 
 
 char **hay_equipo(char *nombre) {
   pthread_mutex_lock(&m);
-  int equipoAct = wait/5;
   int pos = wait%5;
-  int my_num = wait++;
-  // pasan en orden 
-  while (my_num != actual && equipoAct != equipos){
-    pthread_cond_wait(&c, &m);
-  }
-  //el primero crea el arreglo
+  wait++;
+  //cuando la posicion es 0 crea un nuevo arreglo
   if (pos == 0){
-    char **team = malloc(5*sizeof(char *));
-    equipo = team;
-    estado = 0;
-    eFaltante = 5;
+    equipo = malloc(5*sizeof(char *));
+    state = (int *)malloc(2*sizeof(int));
+    //lleva la cuenta de cuantos jugadores ya se unieron al equipo
+    state[0] = 0;
+    //lleva la cuenta de cuantos jugadores ya devolvieron el arreglo para liberar state
+    state[1] = 5;
   }
+  char **equipo_local = equipo;
+  int *local_state = state;
   //se van agregando al arreglo
   equipo[pos] = nombre;
-  actual++;
-  pthread_cond_broadcast(&c);
-  char **equipo_local = equipo;
-  estado++;
-  pthread_mutex_unlock(&m);
-  //chequear que avance
-  printf("En el jugador: %d \n", my_num);
-  pthread_mutex_lock(&m);
+  state[0]++;
   //espera a que todos los jugadores se hayan agregado al equipos para hacer el return
-  while (estado < 5){
+  while (local_state[0] < 5 ){
     pthread_cond_wait(&c, &m);
   }
-  eFaltante--;
-  //si ya estan listo todos los equipos permite la entrada del resto
-  if (eFaltante == 0){
-    equipos++;
+  local_state[1]--;
+  //si ya estan listo todo el equipo listo libera el arreglo
+  if (local_state[1] == 0){
+    free(local_state);
   }
   pthread_cond_broadcast(&c);
   pthread_mutex_unlock(&m);
@@ -56,9 +45,7 @@ char **hay_equipo(char *nombre) {
 }
 
 void init_equipo(void) {
-  equipo = malloc(sizeof(char **));
 }
 
 void end_equipo(void) {
-  free(equipo);
 }
