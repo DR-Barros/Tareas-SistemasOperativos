@@ -33,10 +33,35 @@ int PriLength(PriQueue pq);         // Largo de la cola
 // =============================================================
 
 struct subasta {
-  ... defina aca la estructura de datos para la subasta ...
+  int unidades;
+  pthread_mutex_t m;
+  PriQueue q;
+  int terminado;
 };
 
-... programe aca las funciones solicitadas: nuevaSubasta, adjudicar, etc. ...
+//... programe aca las funciones solicitadas: nuevaSubasta, adjudicar, etc. ...
+
+Subasta nuevaSubasta(int unidades){
+  //crear una subasta en que se puedan ir agregando los n elementos
+  Subasta subasta = malloc(sizeof(Subasta));
+  subasta->unidades;
+  subasta ->q = MakePriQueue(subasta);
+  subasta ->terminado = FALSE;
+}
+int ofrecer(Subasta s, double precio){
+  //poner en la cola el monto ofrecido si es mayor que el monto menor
+  // y ponerme en wait hasta que otro elemento me despierte (me paso en la lista)
+  //devolver false si termine de ofrecer antes de que termine la subasta
+}
+double adjudicar(Subasta s, int *punidades){
+  //Terminar la subasta, nadie mas puede ofertar, y devolver en punidades
+  // las unidades que no se vendieron
+}
+void destruirSubasta(Subasta s){
+  //libera la memoria de la subasta
+  DestroyPriQueue(s->q);
+  free(s)
+}
 
 // =============================================================
 // No toque nada a partir de aca: es la implementacion de la cola
