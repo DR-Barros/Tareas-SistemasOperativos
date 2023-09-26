@@ -33,34 +33,76 @@ int PriLength(PriQueue pq);         // Largo de la cola
 // =============================================================
 
 struct subasta {
-  int unidades;
+  int unidades, terminado;
+  PriQueue pq;
   pthread_mutex_t m;
-  PriQueue q;
-  int terminado;
 };
 
-//... programe aca las funciones solicitadas: nuevaSubasta, adjudicar, etc. ...
+typedef struct {
+  pthread_cond_t c;
+  int ready;
+} Request;
 
+
+//... programe aca las funciones solicitadas: nuevaSubasta, adjudicar, etc. ...
 Subasta nuevaSubasta(int unidades){
   //crear una subasta en que se puedan ir agregando los n elementos
-  Subasta subasta = malloc(sizeof(Subasta));
-  subasta->unidades;
-  subasta ->q = MakePriQueue(subasta);
-  subasta ->terminado = FALSE;
+  Subasta sub = (Subasta) malloc(2*sizeof(int)+sizeof(PriQueue)+sizeof(pthread_mutex_t));
+  sub->unidades = unidades;
+  sub->pq = MakePriQueue(unidades);
+  sub->terminado = FALSE;
+  pthread_mutex_init(&sub->m, NULL);
+  return sub;
 }
+
 int ofrecer(Subasta s, double precio){
   //poner en la cola el monto ofrecido si es mayor que el monto menor
   // y ponerme en wait hasta que otro elemento me despierte (me paso en la lista)
   //devolver false si termine de ofrecer antes de que termine la subasta
+  pthread_mutex_lock(&(s->m));
+  if(PriLength(s->pq) >= s->unidades){
+    if(precio < PriBest(s->pq)){
+      pthread_mutex_unlock(&s->m);
+      //la oferta no cumple el minimo para ganarle a alguna ganadora por lo que retorna false
+      return FALSE;
+    } else {
+      //sacamos el primer elemento para poder meter el nuevo
+      Request* despertar = (Request*) PriGet(s->pq);
+      despertar->ready = TRUE;
+      pthread_cond_signal(&despertar->c);
+    }
+  }
+  //metemos el nuevo elemento
+  Request r = {PTHREAD_COND_INITIALIZER, FALSE};
+  PriPut(s->pq, &r, precio);
+  while (!r.ready){
+    pthread_cond_wait(&r.c, &s->m);
+  }
+  //si la subasta termino y sigue en cola es false sino true
+  int dev = s->terminado;
+  pthread_mutex_unlock(&s->m);
+  return dev;
 }
 double adjudicar(Subasta s, int *punidades){
   //Terminar la subasta, nadie mas puede ofertar, y devolver en punidades
   // las unidades que no se vendieron
+  pthread_mutex_lock(&(s->m));
+  *punidades = s->unidades - PriLength(s->pq);
+  s->terminado = TRUE;
+  double recaudado = 0;
+  while(!EmptyPriQueue(s->pq)){
+    recaudado += PriBest(s->pq);
+    Request *r = PriGet(s->pq);
+    r->ready = TRUE;
+    pthread_cond_signal(&r->c);
+  }
+  pthread_mutex_unlock(&s->m);
+  return recaudado;
 }
 void destruirSubasta(Subasta s){
   //libera la memoria de la subasta
-  DestroyPriQueue(s->q);
-  free(s)
+  DestroyPriQueue(s->pq);
+  free(s);
 }
 
 // =============================================================
