@@ -1,7 +1,46 @@
+#define _POSIX_C_SOURCE 200112L
 #define _GNU_SOURCE 1
 
 #include "nthread-impl.h"
 #include <sys/resource.h>
+
+typedef struct {
+  int coreIn, coreOut, sig1, cnt, sig2, usr1;
+  long long start, end, sliceIn, sliceOut, intr;
+  nThread thIn, thOut;
+} Entry;
+
+#ifdef TRACERR
+#ifndef TRACELEN
+#define TRACELEN 10000
+#endif
+Entry log_e[TRACELEN];
+int logIdx= 0;
+__thread Entry *plog;
+
+void nth_printLog(int n) {
+  printf("core start  intr   end   elap slice sl out si1 cnt si2 us1 thread\n");  
+  int end= logIdx;
+  int ini= 0;
+  if (n>0)
+    end= n;
+  else
+    ini= logIdx+n;
+  int k= ini;
+  while (k<end) {
+    Entry *plog= &log_e[k];
+    printf(" %2d%c %5d %5d %5d  %5d %5d  %5d  %2d  %2d  %2d  %2d  %p%c\n",
+           plog->coreIn,plog->coreIn==plog->coreOut?' ':'*',
+           (int)(plog->start/1000000),
+           plog->intr<0?-1:(int)(plog->intr/1000000),
+           (int)(plog->end/1000000), (int)((plog->end-plog->start)/1000000),
+           (int)(plog->sliceIn/1000000), (int)(plog->sliceOut/1000000),
+           plog->sig1, plog->cnt, plog->sig2, plog->usr1,
+           (void*)plog->thOut,plog->thIn==plog->thOut?' ':'*');
+    k++;
+  }
+}
+#endif
 
 static void nth_setCoreTimerAlarm(long long sliceNanos, int coreId);
 static long long nth_getCoreNanos();
@@ -46,6 +85,14 @@ void nth_rrThreadInit(void) {
     perror("timer_create");
     nFatalError("nth_rrThreadInit", "Cannot continue\n");
   }
+
+#ifdef TRACERR
+  plog= &log_e[logIdx++];
+  plog->coreIn= nth_coreId(); plog->coreOut= -1;
+  plog->start= nth_getCoreNanos(); plog->end= -1;
+  plog->sliceIn= -1; plog->sliceOut= -1;
+  plog->intr= -1;
+#endif
 }
 
 static long long nth_getCoreNanos() {
@@ -58,22 +105,26 @@ static long long nth_getCoreNanos() {
 }
 
 static void nth_VTimerHandler(int sig, siginfo_t *si, void *uc) {
+  // If this core is waiting in nth_rrSchedule, a return to nth_rrSchedule
+  // is mandatory because calling recursively nth_rrSchedule is unsafe
+  if (nth_coreIsIdle[nth_coreId()])
+    return;
   nThread th= nth_selfCritical();
   if (th==NULL)
-    return; // It has been called for nth_coreFun()
+    return; // to avoid weird race conditions
   
   START_HANDLER
-# ifdef TRACESCHED
-    printk("SCHED %d:SIGVTALRM\n", nth_coreId());
-# endif  
-
+  
+#ifdef TRACERR
+    plog->intr= nth_getCoreNanos();
+#endif
+    
   th->sliceNanos= 0;
   if (!nth_emptyQueue(nth_rrReadyQueue))
     nth_implicitContextChanges++;
 
   // If this core is waiting in sigsuspend in nth_rrSchedule,
   // do not call recursively nth_rrSchedule
-
   if ( !nth_coreIsIdle[nth_coreId()] ) {
     schedule();
   }
@@ -84,53 +135,40 @@ static void nth_VTimerHandler(int sig, siginfo_t *si, void *uc) {
 static void nth_rrSetReady(nThread th) {
   CHECK_CRITICAL("nth_rrSetReady")
   
-  assert(th->status!=READY && th->status!=RUN && th->timequeue==NULL);
-  
-  int prevStatus= th->status;
-  (void)prevStatus;
+  if (th->status==READY || th->status==RUN)
+    nFatalError("nth_rrReady", "The thread was already in READY status\n");
 
   th->status= READY;
   if (nth_allocCoreId(th)<0) {
-    if (th->sliceNanos>0) {               // it has some slice yet
+    if (th->sliceNanos>0)                 // it has some slice yet
       nth_putFront(nth_rrReadyQueue, th);
-    }
     else {                                // it exhausted its slice
-      th->sliceNanos= nth_sliceNanos;     // give it a whole new slice and
-      nth_putBack(nth_rrReadyQueue, th);  // put it at the end of the queue
+       th->sliceNanos= nth_sliceNanos;    // give it a whole new slice and
+       nth_putBack(nth_rrReadyQueue, th); // put it at the end of the queue
     }
-#   ifdef TRACESCHED
-      printk( "SCHED %d:setReady %s %s %d us\n", nth_coreId(),
-              th->name, nth_stateNames[prevStatus], th->sliceNanos/1000 );
-#   endif
   }
   else if (nth_allocCoreId(th)!=nth_coreId()) {
     // Thread th is allocated to nth_allocCoreId(th), wake it up
-#   ifdef TRACESCHED
-      printk( "SCHED %d:setReady %s %s %d us alloc at %d\n", nth_coreId(),
-               th->name, nth_stateNames[prevStatus], th->sliceNanos/1000,
-               nth_allocCoreId(th) );
-#   endif
-    // Not needed: nth_delQueue(nth_rrReadyQueue, th);
+#if 0
+    DBG(
+      printf("wake core %d up from %d\n", nth_allocCoreId(th), nth_coreId());
+    );
+#endif
+#ifdef TRACERR
+    plog->sig1=nth_allocCoreId(th);
+    plog->cnt++;
+#endif
     nth_coreWakeUp(nth_allocCoreId(th));
   }
-# ifdef TRACESCHED
-  else {
-    printk("SCHED %d:setReady %s same core\n", nth_coreId(), th->name);
-  }
-# endif
 }
 
 static void nth_rrSuspend(State waitState) {
   CHECK_CRITICAL("nth_rrSuspend")
 
   nThread th= nSelf();
-# ifdef TRACESCHED
-    printk( "SCHED %d:suspend(%s,%s)\n",
-            nth_coreId(), th->name, nth_stateNames[th->status] );
-# endif
-  // if (th->status==READY)
-  //   nth_delQueue(nth_rrReadyQueue, th);
-  if (th->status!=RUN)
+  if (th->status==READY)
+    nth_delQueue(nth_rrReadyQueue, th);
+  else if (th->status!=RUN)
     nFatalError("nth_fcfsSuspend", "Thread was not ready or run\n");
 
   th->status= waitState;
@@ -143,84 +181,56 @@ static void nth_rrSchedule(void) {
 
   nThread thisTh= nSelf();
 
+#ifdef TRACERR  
+  plog->thOut= thisTh;
+  plog->coreOut= nth_coreId();
+#endif
+
   if (thisTh!=NULL) {
     long long endNanos= nth_getCoreNanos();
     thisTh->sliceNanos -= endNanos-thisTh->startCoreNanos;
+#ifdef TRACERR  
+    plog->end= endNanos;
+    plog->sliceOut= thisTh->sliceNanos;
+#endif
   }
   // thisTh->sliceNanos can be negative if the slice expired when
   // signals were disabled
 
   for (;;) {
     if (thisTh!=NULL && (thisTh->status==READY || thisTh->status==RUN)) {
-      if (nth_queryThread(nth_rrReadyQueue, thisTh))
-        nFatalError("nth_rrSchedule", "Thread should not be in ready queue\n");
-      if (thisTh->sliceNanos>0) {
-#       ifdef TRACESCHED
-          printk( "SCHED %d:sched %s %s %d us\n", nth_coreId(),
-                  thisTh->name, nth_stateNames[thisTh->status],
-                  thisTh->sliceNanos/1000 );
-#       endif
+      if (nth_allocCoreId(thisTh)<0 && thisTh->status==READY)
+        nth_delQueue(nth_rrReadyQueue, thisTh);
+      if (thisTh->sliceNanos>0)
         break; // Continue running same allocated thread
-      }
       else {
         thisTh->sliceNanos= nth_sliceNanos;
-        if (nth_emptyQueue(nth_rrReadyQueue)) {
-#         ifdef TRACESCHED
-            printk( "SCHED %d:sched %s %s %d us\n", nth_coreId(),
-                    thisTh->name, nth_stateNames[thisTh->status],
-                    thisTh->sliceNanos/1000 );
-#         endif
-          break;
-        }
-#       ifdef TRACESCHED
-          printk( "SCHED %d:sched %s %s %d us\n", nth_coreId(),
-                  thisTh->name, nth_stateNames[thisTh->status],
-                  thisTh->sliceNanos/1000 );
-#       endif
         thisTh->status= READY;
         nth_putBack(nth_rrReadyQueue, thisTh);
       }
     }
- 
+      
     nThread nextTh= nth_getFront(nth_rrReadyQueue);
     if (nextTh!=NULL) {
-      if (nth_allocCoreId(nextTh) != -1)
-        nFatalError("nth_rrSchedule", "Thread should not be in ready queue\n");
-
       // The context change: give this core to nextTh
       // it will take a while to return from here
       // Meanwhile thread nextTh and others are being executed
-      
-#     ifdef TRACESCHED
-        printk( "SCHED %d:switch %s %s %d us -> %s %s %d us\n", nth_coreId(),
-                thisTh!=NULL ? thisTh->name : NULL,
-                thisTh!=NULL ? nth_stateNames[thisTh->status] : NULL,
-                thisTh!=NULL ? thisTh->sliceNanos/1000 : 0,
-                nextTh->name, nth_stateNames[nextTh->status],
-                nextTh->sliceNanos/1000 );
-#     endif
 
-      assert( thisTh==NULL || thisTh->status!=READY ||
-              nth_queryThread(nth_rrReadyQueue, thisTh) );
       nth_changeContext(thisTh, nextTh);
 
       // Some time later, at return the scheduler gave back onother core
-      // to thisTh so probably previous core != next core
+      // to thisTh Most probably coreId() != prevCoreId
       if (thisTh->status==READY)
         break;
     }
     
-    if (thisTh!=nSelf())
-      nFatalError("nth_rrSchedule", "nSelf() inconsistency\n");
-
-    // No threads to execute: the core will be parked
-
+    DBG(
+      if (thisTh!=nSelf())
+        nFatalError("nth_rrSchedule", "nSelf() inconsistency\n");
+    );
     int coreId= nth_coreId();
-#   ifdef TRACESCHED
-      printk("SCHED %d:PARK\n", coreId);
-#   endif
     nth_coreIsIdle[coreId]= 1; // To prevent a signal handler to call
-    CHECK_STACK                // recursively this scheduler
+    CHECK_STACK          // recursively this scheduler
     int id= 0;
     while (id<nth_totalCores) {
       if ( !nth_coreIsIdle[id] || nth_reviewStatus[id] ||
@@ -238,20 +248,26 @@ static void nth_rrSchedule(void) {
       llLock(&nth_schedMutex);
     nth_coreIsIdle[coreId]= 0;
     nth_reviewStatus[coreId]= 0;
-#   ifdef TRACESCHED
-      printk("SCHED %d:UNPARK\n", coreId);
-#   endif
   }
 
-  if (thisTh!=nSelf())
-    nFatalError("nth_rrSchedule", "nSelf() inconsistency\n");
-
+  DBG(
+    if (thisTh!=nSelf())
+      nFatalError("nth_rrSchedule", "nSelf() inconsistency\n");
+  );
   CHECK_STACK
-  if (thisTh->status!=READY && thisTh->status!=RUN)
-    nFatalError("nth_rrSchedule", "Thread is not ready to run\n");
   thisTh->status= RUN;
   thisTh->startCoreNanos= nth_getCoreNanos();
-
+#ifdef TRACERR
+  if (logIdx>=TRACELEN) {
+    nFatalError("nth_rrSchedule", "Trace length exceeded\n");
+  }
+  plog= &log_e[logIdx++];
+  plog->coreIn= nth_coreId(); plog->coreOut= -1;
+  plog->start= thisTh->startCoreNanos; plog->end= -1;
+  plog->thIn= thisTh; plog->thOut= NULL;
+  plog->intr= -1; plog->sliceIn= thisTh->sliceNanos; plog->sliceOut= -1;
+  plog->sig1= plog->sig2= -1; plog->cnt= 0; plog->usr1= 0;
+#endif
   if (!nth_emptyQueue(nth_rrReadyQueue))
     nth_reviewCores();
   nth_setCoreTimerAlarm(thisTh->sliceNanos, nth_coreId());
@@ -268,8 +284,43 @@ static void nth_setCoreTimerAlarm(long long sliceNanos, int coreId) {
     if (rc==-1)
       perror("timer_settime");
     nFatalError("timer_settime", "Failed to set time alarm, cannot continue\n");
+#if 0
+    sigset_t sigcurr;
+    pthread_sigmask(SIG_UNBLOCK, NULL, &sigcurr);
+    if (sigismember(&sigcurr, SIGVTALRM))
+      nFatalError("nth_setCoreTimerAlarm", "SIGVTALRM is enable in critical zone\n");
+    if (sigismember(&sigcurr, SIGALRM))
+      nFatalError("nth_setCoreTimerAlarm", "SIGALRM is enable in critical zone\n");
+    if (sigismember(&sigcurr, SIGIO))
+      nFatalError("nth_setCoreTimerAlarm", "SIGIO is enable in critical zone\n");
+    if (sigismember(&sigcurr, SIGUSR1))
+      nFatalError("nth_setCoreTimerAlarm", "SIGUSR1 is enable in critical zone\n");
+    CHECK_CRITICAL("nth_setCoreTimerAlarm");
+#endif
   }
 }
+
+#if 0
+static void nth_gettime(int coreId) {
+  if (coreId<0)
+    coreId= nth_coreId();
+  struct itimerspec spec;
+  if (timer_gettime(nth_timerSet[coreId], &spec)!=0)
+    perror("timer_gettime");
+  printf("next expiration in %lld nanos, interval is %lld nanos\n",
+    (long long)spec.it_value.tv_sec*1000000000+spec.it_value.tv_nsec,
+    (long long)spec.it_interval.tv_sec*1000000000+spec.it_interval.tv_nsec);
+}
+
+// Check the unblocking of the SIGVTALRM signal
+static int nth_checkVtAlrm(void) {
+  sigset_t empty, curr;
+  sigemptyset(&empty);
+  // nth_sigsetApp is the set of signals normally accepted in app mode
+  pthread_sigmask(SIG_UNBLOCK, &empty, &curr);
+  return sigismember(&curr, SIGVTALRM);
+}
+#endif
 
 static void nth_rrStop(void) {
   CHECK_CRITICAL("nth_rrStop")
@@ -288,7 +339,7 @@ Scheduler nth_rrScheduler= { .schedule = nth_rrSchedule,
                                .suspend = nth_rrSuspend,
                                .stop = nth_rrStop };
                                
-void nSetTimeSlice(long long sliceNanos) {
+void nSetTimeSlice(int sliceNanos) {
   START_CRITICAL
   
   if (nth_verbose)

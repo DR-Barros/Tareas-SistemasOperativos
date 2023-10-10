@@ -49,13 +49,26 @@ void nth_setScheduler(Scheduler scheduler) {
  *************************************************************/
 
 static volatile int nth_schedStatus= -1;
+
+#ifdef NTHSPINLOCKS
 static pthread_spinlock_t nth_schedSpinLock;
+#else
+static pthread_mutex_t nth_schedMutex= PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 void nth_schedLock(void) {
+#ifdef NTHSPINLOCKS
   if (pthread_spin_lock(&nth_schedSpinLock)!=0) {
     perror("pthread_spin_lock");
     nFatalError("nth_schedLock", "Failed\n");
   }
+#else
+  if (pthread_mutex_lock(&nth_schedMutex)!=0) {
+    perror("pthread_mutex_lock");
+    nFatalError("nth_schedLock", "Failed\n");
+  }
+#endif
+
   assert(nth_schedStatus<0);
   nth_schedStatus= nth_thisCoreId;
 }
@@ -63,10 +76,17 @@ void nth_schedLock(void) {
 void nth_schedUnlock(void) {
   assert(nth_schedStatus==nth_thisCoreId);
   nth_schedStatus= -1;
+#ifdef NTHSPINLOCKS
   if (pthread_spin_unlock(&nth_schedSpinLock)!=0) {
     perror("pthread_spin_unlock");
     nFatalError("nth_schedUnlock", "Failed\n");
   }
+#else
+  if (pthread_mutex_unlock(&nth_schedMutex)!=0) {
+    perror("pthread_mutex_unlock");
+    nFatalError("nth_schedUnlock", "Failed\n");
+  }
+#endif
 }
 
 __thread int nth_criticalLvl= 0; // For nested critical sections
@@ -666,8 +686,38 @@ void nShutdown(int rc) {
 }
 
 /*************************************************************
- * Core wake up
+ * Core park and wake up
  *************************************************************/
+
+void nth_corePark(void) {
+  int coreId= nth_coreId();
+# ifdef TRACESCHED
+    printk("SCHED %d:PARK\n", coreId);
+# endif
+  nth_coreIsIdle[coreId]= 1; // To prevent a signal handler to call
+  CHECK_STACK                // recursively this scheduler
+  int id= 0;
+  while (id<nth_totalCores) {
+    if ( !nth_coreIsIdle[id] || nth_reviewStatus[id] ||
+         (nth_coreThreads[id]!=NULL && nth_coreThreads[id]->status==READY) )
+      break;
+    id++;
+  }
+
+  if (id>=nth_totalCores && !nth_alarmArmed)
+    nFatalError("nth_rrSchedule", "Deadlock\n");
+
+  if (nth_totalCores>1)
+    nth_schedUnlock();
+  sigsuspend(&nth_sigsetApp);
+  if (nth_totalCores>1)
+    nth_schedLock();
+  nth_coreIsIdle[coreId]= 0;
+  nth_reviewStatus[coreId]= 0;
+# ifdef TRACESCHED
+    printk("SCHED %d:UNPARK\n", coreId);
+# endif
+}
 
 void nth_coreWakeUp(int id) {
   nth_reviewStatus[id]= 1;

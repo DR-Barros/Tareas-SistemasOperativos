@@ -55,10 +55,7 @@ static void nth_pri1Schedule(void) {
       break;
     }
     else {
-      nth_coreIsIdle[0]= 1; // To prevent a signal handler to call
-                                       // recursively this scheduler
-      sigsuspend(&nth_sigsetApp);
-      nth_coreIsIdle[0]= 0;
+      nth_corePark();
     }
   }
 

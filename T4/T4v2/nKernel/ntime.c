@@ -73,7 +73,7 @@ long long nGetTimeNanos(void) {
   }
   long long curr_time= (long long)ts.tv_sec*1000000000LL+ts.tv_nsec-nth_iniTime;
   if (curr_time<nth_last_time)
-#if 1
+#if 0
     nFatalError("nGetTimeNanos", "Previous time newer than current time "
                 "(delta=%lld cores= %d %d)\n", curr_time-nth_last_time,
                  nth_last_coreId, nth_coreId());

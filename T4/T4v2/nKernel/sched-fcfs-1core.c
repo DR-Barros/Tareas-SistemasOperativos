@@ -18,10 +18,11 @@ static void nth_fcfs1Suspend(State waitState) {
   CHECK_CRITICAL("nth_fcfs1Suspend")
 
   nThread th= nSelf();
-  if (th->status==READY)
-    nth_delQueue(nth_fcfs1ReadyQueue, th);
-  else if (th->status!=RUN)
-    nFatalError("nth_fcfs1Suspend", "Thread was not ready or run\n");
+  // if (th->status==READY)
+  //   nth_delQueue(nth_fcfs1ReadyQueue, th);
+  // else
+  assert(th->status==RUN);
+
   th->status= waitState;
 }
 
@@ -44,10 +45,7 @@ static void nth_fcfs1Schedule(void) {
     // No thread to execute, only a signal can wake up a thread,
     // but signals are disabled because this is a critical section,
     // so while waiting, they must be enabled
-    nth_coreIsIdle[0]= 1; // To prevent a signal handler to call
-                                     // recursively this scheduler
-    sigsuspend(&nth_sigsetApp);
-    nth_coreIsIdle[0]= 0;
+    nth_corePark();
     nextTh= nth_getFront(nth_fcfs1ReadyQueue);
   }
 

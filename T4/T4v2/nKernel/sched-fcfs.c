@@ -27,10 +27,10 @@ static void nth_fcfsSuspend(State waitState) {
   CHECK_CRITICAL("nth_fcfsSuspend")
 
   nThread th= nSelf();
-  if (th->status==READY)
-    nth_delQueue(nth_fcfsReadyQueue, th);
-  else if (th->status!=RUN)
-    nFatalError("nth_fcfsSuspend", "Thread was not ready or run\n");
+  // if (th->status==READY)
+  //   nth_delQueue(nth_fcfsReadyQueue, th);
+  // else
+  assert(th->status==RUN);
 
   th->status= waitState;
 }
@@ -68,26 +68,8 @@ static void nth_fcfsSchedule(void) {
       if (thisTh->status==READY)
         break;
     }
-    int coreId= nth_coreId();
-    nth_coreIsIdle[coreId]= 1; // To prevent a signal handler to call
-                                     // recursively this scheduler
-    CHECK_STACK
-    int id= 0;
-    while (id<nth_totalCores) {
-      if ( !nth_coreIsIdle[id] || nth_reviewStatus[id] ||
-           (nth_coreThreads[id]!=NULL && nth_coreThreads[id]->status==READY) )
-        break;
-      id++;
-    }
 
-    if (id>=nth_totalCores && !nth_alarmArmed)
-      nPrintf("nth_fcfsSchedule: Deadlock?\n");
-
-    llUnlock(&nth_schedMutex);
-    sigsuspend(&nth_sigsetApp);
-    llLock(&nth_schedMutex);
-    nth_coreIsIdle[coreId]= 0;
-    nth_reviewStatus[coreId]= 0;
+    nth_corePark();
   } 
   DBG(
     if (thisTh!=nSelf())

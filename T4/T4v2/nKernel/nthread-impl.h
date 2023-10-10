@@ -144,18 +144,10 @@ void nth_destroyTimeQueue(NthTimeQueue *timeq);
 
 // Low level mutex and condition
 
-#if 0
-
+#ifndef NTHSPINLOCKS
 #define llMutexInit(m) (pthread_mutex_init(&nth_schedMutex, NULL))
-#define llLock(m)      (pthread_mutex_lock(m))
-#define llUnlock(m)    (pthread_mutex_unlock(m))
-
 #else
-
 #define llMutexInit(m) pthread_spin_init(&nth_schedSpinLock, 0)
-#define llLock(m)      nth_schedLock()
-#define llUnlock(m)    nth_schedUnlock()
-
 #endif
 
 void nth_schedLock(void);
@@ -207,7 +199,8 @@ void nth_setScheduler(Scheduler scheduler);
  * Internal functions
  *************************************************************/
 
-// Core wake up
+// Core park and wake up
+void nth_corePark(void);
 void nth_coreWakeUp(int id);
 void nth_reviewCores(void);
 
