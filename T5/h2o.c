@@ -11,6 +11,11 @@
 NthQueue *qo;
 NthQueue *qh;
 
+void cancelTimeout(nThread th) {
+  th->ptr = NULL;
+  nth_delQueue(qo, th);  // Eliminar el hilo de la cola de oxígeno
+}
+
 void initH2O(void) {
   //... inicialice aca las variables globales ...
   qo = nth_makeQueue();
@@ -37,15 +42,11 @@ H2O *nCombineOxy(Oxygen *o, int timeout) {
     // esperar que le manden el agua
     if (timeout > 0){
       suspend(WAIT_H2O_TIMEOUT);
-      nth_programTimer(timeout * 1000000, NULL);
+      nth_programTimer(timeout * 1000000LL, cancelTimeout);
     } else {
       suspend(WAIT_H2O);
     }
     schedule();
-    if (this_th->ptr == o){
-      nth_delQueue(qo, this_th);
-      this_th->ptr = NULL;
-    } 
     h2o = this_th->ptr;
   } else {
     //se pone a crear agua
@@ -73,7 +74,7 @@ H2O *nCombineHydro(Hydrogen *h) {
   START_CRITICAL
   
   H2O *h2o;
-  if (nth_queueLength(qo)< 1){
+  if (nth_emptyQueue(qo)){
     //no esta listo para crear agua
     nThread this_th = nSelf();
     this_th->ptr = h;
@@ -84,7 +85,7 @@ H2O *nCombineHydro(Hydrogen *h) {
     schedule();
     h2o = this_th->ptr;
   } else{
-    if (nth_queueLength(qh)< 1){
+    if (nth_emptyQueue(qh)){
       //no esta listo para crear agua
       nThread this_th = nSelf();
       this_th->ptr = h;
@@ -99,14 +100,17 @@ H2O *nCombineHydro(Hydrogen *h) {
     nThread h1, o;
     h1 = nth_getFront(qh);
     o = nth_getFront(qo);
+    if(o->status == WAIT_H2O_TIMEOUT){
+      // cancelar timer si tiene timer
+      nth_cancelThread(o);
+    }
+
+    //se crea el agua
     h2o = makeH2O(h1->ptr, h, o->ptr);
     //envia el agua a los hidrogenos
     h1->ptr = h2o;
     o->ptr = h2o;
-    if(o->status == WAIT_SEND_TIMEOUT){
-      // cancelar timer si tiene timer
-      nth_cancelThread(o);
-    }
+    
     //despierta a los hidrogenos
     setReady(h1);
     setReady(o);
